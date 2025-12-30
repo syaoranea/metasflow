@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { db } from '@/lib/firebaseAdmin'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
   try {
     const session = await getServerSession(authOptions)
 
@@ -13,25 +16,27 @@ export async function GET(request: Request, { params }: { params: { id: string }
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
-    const goal = await prisma.goal.findFirst({
-      where: {
-        id: params.id,
-        userId: session.user.id,
-      },
-    })
-
-    if (!goal) {
+    // Verifica se a meta pertence ao usuário
+    const goalDoc = await db.collection('goals').doc(params.id).get()
+    if (!goalDoc.exists) {
       return NextResponse.json({ error: 'Meta não encontrada' }, { status: 404 })
     }
+    const goalData = goalDoc.data()
+    if (goalData?.userId !== session.user.id) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+    }
 
-    const tasks = await prisma.task.findMany({
-      where: {
-        goalId: params.id,
-      },
-      orderBy: {
-        order: 'asc',
-      },
-    })
+    // Busca tarefas relacionadas ordenadas por 'order' asc
+    const tasksSnapshot = await db
+      .collection('tasks')
+      .where('goalId', '==', params.id)
+      .orderBy('order', 'asc')
+      .get()
+
+    const tasks = tasksSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    }))
 
     return NextResponse.json(tasks)
   } catch (error) {
@@ -43,7 +48,10 @@ export async function GET(request: Request, { params }: { params: { id: string }
   }
 }
 
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
   try {
     const session = await getServerSession(authOptions)
 
@@ -51,15 +59,14 @@ export async function POST(request: Request, { params }: { params: { id: string 
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
-    const goal = await prisma.goal.findFirst({
-      where: {
-        id: params.id,
-        userId: session.user.id,
-      },
-    })
-
-    if (!goal) {
+    // Verifica se a meta pertence ao usuário
+    const goalDoc = await db.collection('goals').doc(params.id).get()
+    if (!goalDoc.exists) {
       return NextResponse.json({ error: 'Meta não encontrada' }, { status: 404 })
+    }
+    const goalData = goalDoc.data()
+    if (goalData?.userId !== session.user.id) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
     const body = await request.json()
@@ -72,22 +79,28 @@ export async function POST(request: Request, { params }: { params: { id: string 
       )
     }
 
-    const maxOrder = await prisma.task.findFirst({
-      where: { goalId: params.id },
-      orderBy: { order: 'desc' },
-      select: { order: true },
-    })
+    // Buscar a maior ordem atual para a meta
+    const tasksSnapshot = await db
+      .collection('tasks')
+      .where('goalId', '==', params.id)
+      .orderBy('order', 'desc')
+      .limit(1)
+      .get()
 
-    const task = await prisma.task.create({
-      data: {
-        title,
-        deadline: deadline ? new Date(deadline) : null,
-        order: (maxOrder?.order ?? -1) + 1,
-        goalId: params.id,
-      },
-    })
+    const maxOrder = tasksSnapshot.empty ? -1 : tasksSnapshot.docs[0].data().order
 
-    return NextResponse.json(task, { status: 201 })
+    const newTask = {
+      title,
+      deadline: deadline ? new Date(deadline).toISOString() : null,
+      order: maxOrder + 1,
+      goalId: params.id,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+
+    const docRef = await db.collection('tasks').add(newTask)
+
+    return NextResponse.json({ id: docRef.id, ...newTask }, { status: 201 })
   } catch (error) {
     console.error('Erro ao criar tarefa:', error)
     return NextResponse.json(

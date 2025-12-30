@@ -1,7 +1,8 @@
+// pages/api/goals/route.ts
 import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { db } from '@/lib/firebaseAdmin'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,28 +18,51 @@ export async function GET(request: Request) {
     const category = searchParams.get('category')
     const status = searchParams.get('status')
 
-    const where: any = {
-      userId: session.user.id,
-    }
+    let query: FirebaseFirestore.Query = db.collection('goals')
 
+    // Filtrar por userId
+    query = query.where('userId', '==', session.user.id)
+
+    // Filtrar por categoria
     if (category && category !== 'TODAS') {
-      where.category = category
+      query = query.where('category', '==', category)
     }
 
+    // Filtrar por status
     if (status && status !== 'TODOS') {
-      where.status = status
+      query = query.where('status', '==', status)
     }
 
-    const goals = await prisma.goal.findMany({
-      where,
-      include: {
-        tasks: true,
-        reflections: true,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    })
+    // Ordenar por data de criação (descendente)
+    const snapshot = await query.orderBy('createdAt', 'desc').get()
+
+    const goals = []
+    for (const doc of snapshot.docs) {
+      const goal = { id: doc.id, ...doc.data() }
+
+      // Buscar tasks relacionadas
+      const tasksSnapshot = await db
+        .collection('tasks')
+        .where('goalId', '==', doc.id)
+        .get()
+      const tasks = tasksSnapshot.docs.map(t => ({ id: t.id, ...t.data() }))
+
+      // Buscar reflections relacionadas
+      const reflectionsSnapshot = await db
+        .collection('reflections')
+        .where('goalId', '==', doc.id)
+        .get()
+      const reflections = reflectionsSnapshot.docs.map(r => ({
+        id: r.id,
+        ...r.data(),
+      }))
+
+      goals.push({
+        ...goal,
+        tasks,
+        reflections,
+      })
+    }
 
     return NextResponse.json(goals)
   } catch (error) {
@@ -68,16 +92,20 @@ export async function POST(request: Request) {
       )
     }
 
-    const goal = await prisma.goal.create({
-      data: {
-        title,
-        description,
-        category,
-        deadline: deadline ? new Date(deadline) : null,
-        priority,
-        userId: session.user.id,
-      },
-    })
+    const newGoal = {
+      title,
+      description: description || '',
+      category,
+      deadline: deadline ? new Date(deadline).toISOString() : null,
+      priority,
+      status: 'EM_ANDAMENTO',
+      userId: session.user.id,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+
+    const docRef = await db.collection('goals').add(newGoal)
+    const goal = { id: docRef.id, ...newGoal }
 
     return NextResponse.json(goal, { status: 201 })
   } catch (error) {

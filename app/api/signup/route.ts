@@ -1,49 +1,48 @@
+// app/api/register/route.ts
 import { NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
 import bcrypt from 'bcryptjs'
+import { db } from '@/lib/firebaseAdmin'
 
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   try {
-    const body = await request.json()
-    const { email, password, name } = body
+    const { email, password, name } = await req.json()
 
     if (!email || !password) {
       return NextResponse.json(
         { error: 'Email e senha são obrigatórios' },
-        { status: 400 }
+        { status: 400 },
       )
     }
 
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    })
+    // Verificar se já existe usuário com esse email
+    const existing = await db
+      .collection('users')
+      .where('email', '==', email)
+      .limit(1)
+      .get()
 
-    if (existingUser) {
+    if (!existing.empty) {
       return NextResponse.json(
-        { error: 'Usuário já existe' },
-        { status: 400 }
+        { error: 'Já existe um usuário com esse email' },
+        { status: 409 },
       )
     }
 
     const hashedPassword = await bcrypt.hash(password, 10)
 
-    const user = await prisma.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-        name: name || null,
-      },
+    await db.collection('users').add({
+      email,
+      name: name || '',
+      password: hashedPassword,
+      createdAt: new Date(),
     })
 
-    return NextResponse.json(
-      { message: 'Usuário criado com sucesso', userId: user.id },
-      { status: 201 }
-    )
+    return NextResponse.json({ success: true }, { status: 201 })
   } catch (error) {
-    console.error('Erro no signup:', error)
+    console.error('Erro ao registrar usuário:', error)
     return NextResponse.json(
-      { error: 'Erro ao criar usuário' },
-      { status: 500 }
+      { error: 'Erro interno ao registrar usuário' },
+      { status: 500 },
     )
   }
 }

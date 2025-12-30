@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { db } from '@/lib/firebaseAdmin'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,30 +16,36 @@ export async function PUT(
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
-    const goal = await prisma.goal.findFirst({
-      where: {
-        id: params.id,
-        userId: session.user.id,
-      },
-    })
-
-    if (!goal) {
+    // Verifica se a meta pertence ao usuário
+    const goalDoc = await db.collection('goals').doc(params.id).get()
+    if (!goalDoc.exists) {
       return NextResponse.json({ error: 'Meta não encontrada' }, { status: 404 })
+    }
+    const goalData = goalDoc.data()
+    if (goalData?.userId !== session.user.id) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
     const body = await request.json()
     const { completed, title, deadline } = body
 
-    const task = await prisma.task.update({
-      where: { id: params.taskId },
-      data: {
-        ...(completed !== undefined && { completed }),
-        ...(title && { title }),
-        ...(deadline !== undefined && { deadline: deadline ? new Date(deadline) : null }),
-      },
-    })
+    const taskRef = db.collection('tasks').doc(params.taskId)
+    const taskDoc = await taskRef.get()
 
-    return NextResponse.json(task)
+    if (!taskDoc.exists) {
+      return NextResponse.json({ error: 'Tarefa não encontrada' }, { status: 404 })
+    }
+
+    const updateData: any = {}
+    if (completed !== undefined) updateData.completed = completed
+    if (title) updateData.title = title
+    if (deadline !== undefined) updateData.deadline = deadline ? new Date(deadline).toISOString() : null
+    updateData.updatedAt = new Date().toISOString()
+
+    await taskRef.update(updateData)
+
+    const updatedTaskDoc = await taskRef.get()
+    return NextResponse.json({ id: updatedTaskDoc.id, ...updatedTaskDoc.data() })
   } catch (error) {
     console.error('Erro ao atualizar tarefa:', error)
     return NextResponse.json(
@@ -60,20 +66,24 @@ export async function DELETE(
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
-    const goal = await prisma.goal.findFirst({
-      where: {
-        id: params.id,
-        userId: session.user.id,
-      },
-    })
-
-    if (!goal) {
+    // Verifica se a meta pertence ao usuário
+    const goalDoc = await db.collection('goals').doc(params.id).get()
+    if (!goalDoc.exists) {
       return NextResponse.json({ error: 'Meta não encontrada' }, { status: 404 })
     }
+    const goalData = goalDoc.data()
+    if (goalData?.userId !== session.user.id) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+    }
 
-    await prisma.task.delete({
-      where: { id: params.taskId },
-    })
+    const taskRef = db.collection('tasks').doc(params.taskId)
+    const taskDoc = await taskRef.get()
+
+    if (!taskDoc.exists) {
+      return NextResponse.json({ error: 'Tarefa não encontrada' }, { status: 404 })
+    }
+
+    await taskRef.delete()
 
     return NextResponse.json({ message: 'Tarefa excluída com sucesso' })
   } catch (error) {

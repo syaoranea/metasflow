@@ -1,3 +1,4 @@
+// app/api/ai/break-goal/route.ts
 import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
@@ -22,6 +23,59 @@ export async function POST(request: Request) {
       )
     }
 
+    // Verificar se a chave da Perplexity está configurada
+    if (!process.env.PERPLEXITY_API_KEY) {
+      console.error('PERPLEXITY_API_KEY não está configurada')
+      return NextResponse.json(
+        { error: 'Serviço de IA não configurado' },
+        { status: 500 }
+      )
+    }
+
+    // 🔧 MODELOS VALIDADOS PARA PERPLEXITY API (Dez/2025)
+    const VALID_MODELS = [
+      'sonar-pro',
+      'sonar',
+      'sonar-reasoning-pro', 
+      'sonar-reasoning',
+      'llama-3.1-sonar-large-128k-online', // Legacy mas ainda funciona
+      'llama-3.1-sonar-large-128k'        // Legacy offline
+    ]
+
+    // Primeiro, tentar endpoint de modelos (com timeout e melhor parsing)
+    let availableModels: string[] = []
+    try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 5000) // 5s timeout
+
+      const modelsResponse = await fetch('https://api.perplexity.ai/models', {
+        headers: {
+          'Authorization': `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+        },
+        signal: controller.signal
+      })
+
+      clearTimeout(timeoutId)
+
+      if (modelsResponse.ok) {
+        const modelsData = await modelsResponse.json()
+        console.log('Resposta completa da lista de modelos:', JSON.stringify(modelsData, null, 2))
+        
+        // 🔧 Melhor parsing da resposta de modelos
+        if (Array.isArray(modelsData)) {
+          availableModels = modelsData
+            .map((m: any) => typeof m === 'string' ? m : m.id || m.name || m.model)
+            .filter(Boolean) as string[]
+        } else if (modelsData?.data?.length) {
+          availableModels = modelsData.data
+            .map((m: any) => m.id || m.name || m.model)
+            .filter(Boolean) as string[]
+        }
+      }
+    } catch (error) {
+      console.warn('Erro ao obter lista de modelos (usando fallback):', error)
+    }
+
     const prompt = `Você é um especialista em planejamento e produtividade. Quebre a seguinte meta em 5-8 tarefas acionáveis e específicas:
 
 Meta: ${goalTitle}
@@ -33,116 +87,131 @@ Responda APENAS com um JSON válido no seguinte formato (sem markdown, sem bloco
     {
       "title": "Título da tarefa 1",
       "estimatedDays": 7
-    },
-    {
-      "title": "Título da tarefa 2",
-      "estimatedDays": 14
     }
   ]
 }
 
-As tarefas devem ser:
-- Específicas e acionáveis
-- Ordenadas logicamente (do primeiro ao último passo)
-- Com estimativa de dias realista para conclusão
-- Entre 5 e 8 tarefas no total`
+IMPORTANTE: 
+- 5-8 tarefas específicas e acionáveis
+- Ordem lógica (primeiro → último passo)
+- Estimativa de dias realista
+- Apenas JSON válido, nada mais`
 
-    const response = await fetch('https://apps.abacus.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.ABACUSAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4.1-mini',
-        messages: [
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-        response_format: { type: 'json_object' },
-        stream: true,
-        max_tokens: 2000,
-      }),
-    })
+    // 🔧 Priorizar modelos conhecidos + disponíveis
+    const modelsToTry = [
+      ...VALID_MODELS.filter(model => availableModels.includes(model)),
+      ...VALID_MODELS,
+      ...availableModels.slice(0, 3) // Primeiros 3 modelos da API
+    ].filter((model, index, arr) => arr.indexOf(model) === index) // Remover duplicatas
 
-    if (!response.ok) {
-      throw new Error('Erro na API de IA')
+    console.log('Modelos para tentar:', modelsToTry)
+
+    if (modelsToTry.length === 0) {
+      throw new Error('Nenhum modelo disponível para usar')
     }
 
-    const stream = new ReadableStream({
-      async start(controller) {
-        const reader = response.body?.getReader()
-        const decoder = new TextDecoder()
-        const encoder = new TextEncoder()
-        let buffer = ''
-        let partialRead = ''
+    let response: Response | null = null
+    let successfulModel = ''
+    let lastError = ''
 
-        try {
-          while (true) {
-            const { done, value } = await reader!.read()
-            if (done) break
-
-            partialRead += decoder.decode(value, { stream: true })
-            let lines = partialRead.split('\n')
-            partialRead = lines.pop() ?? ''
-
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                const data = line.slice(6)
-                if (data === '[DONE]') {
-                  try {
-                    const finalResult = JSON.parse(buffer)
-                    const finalData = JSON.stringify({
-                      status: 'completed',
-                      result: finalResult,
-                    })
-                    controller.enqueue(encoder.encode(`data: ${finalData}\n\n`))
-                  } catch (e) {
-                    console.error('Erro ao parsear JSON:', e)
-                    controller.enqueue(
-                      encoder.encode(
-                        `data: ${JSON.stringify({ status: 'error', message: 'Erro ao processar resposta' })}\n\n`
-                      )
-                    )
-                  }
-                  return
-                }
-                try {
-                  const parsed = JSON.parse(data)
-                  buffer += parsed?.choices?.[0]?.delta?.content ?? ''
-                  const progressData = JSON.stringify({
-                    status: 'processing',
-                    message: 'Gerando tarefas...',
-                  })
-                  controller.enqueue(encoder.encode(`data: ${progressData}\n\n`))
-                } catch (e) {
-                  // Skip invalid JSON
-                }
+    // Tentar cada modelo até encontrar um que funcione
+    for (const model of modelsToTry) {
+      try {
+        console.log(`Tentando modelo: ${model}`)
+        
+        response = await fetch('https://api.perplexity.ai/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: [
+              {
+                role: 'system',
+                content: 'Responda SEMPRE em português brasileiro e forneça APENAS JSON válido, sem explicações, markdown ou texto adicional.'
+              },
+              {
+                role: 'user',
+                content: prompt,
               }
-            }
-          }
-        } catch (error) {
-          console.error('Stream error:', error)
-          controller.error(error)
-        } finally {
-          controller.close()
+            ],
+            temperature: 0.3, // 🔧 Menos aleatoriedade para JSON consistente
+            max_tokens: 1500,
+            stream: false
+          }),
+        })
+
+        if (response.ok) {
+          successfulModel = model
+          console.log(`✅ Modelo ${model} funcionou!`)
+          break
+        } else {
+          const errorText = await response.text()
+          console.warn(`❌ Modelo ${model} falhou (${response.status}):`, errorText)
+          lastError = `Modelo ${model}: ${response.status} ${errorText}`
         }
-      },
+      } catch (error: any) {
+        console.warn(`❌ Erro com modelo ${model}:`, error.message)
+        lastError = `Modelo ${model}: ${error.message}`
+      }
+    }
+
+    if (!response?.ok) {
+      console.error('Todos os modelos falharam. Último erro:', lastError)
+      console.error('Modelos tentados:', modelsToTry)
+      throw new Error(`Nenhum modelo válido encontrado. Último erro: ${lastError}`)
+    }
+
+    const data = await response.json()
+    const content = data.choices?.[0]?.message?.content
+
+    if (!content) {
+      throw new Error('Resposta inválida da API do Perplexity')
+    }
+
+    // 🔧 Melhor parsing de JSON
+    let parsedResult
+    try {
+      // Tentar parse direto
+      parsedResult = JSON.parse(content.trim())
+    } catch (parseError) {
+      try {
+        // Extrair JSON de markdown/texto
+        const jsonMatch = content.match(/\{[\s\S]*?\}/)
+        if (jsonMatch) {
+          parsedResult = JSON.parse(jsonMatch[0])
+        } else {
+          throw parseError
+        }
+      } catch {
+        console.error('Conteúdo bruto da resposta:', content)
+        throw new Error('Não foi possível extrair JSON válido')
+      }
+    }
+
+    // Validar estrutura mínima
+    if (!parsedResult.tasks || !Array.isArray(parsedResult.tasks)) {
+      throw new Error('Resposta não contém array de tasks válido')
+    }
+
+    console.log(`✅ Sucesso com modelo: ${successfulModel}`)
+    console.log('Tarefas geradas:', parsedResult.tasks.length)
+
+    return NextResponse.json({
+      status: 'completed',
+      modelUsed: successfulModel,
+      result: parsedResult
     })
 
-    return new Response(stream, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      },
-    })
-  } catch (error) {
+  } catch (error: any) {
     console.error('Erro ao quebrar meta:', error)
     return NextResponse.json(
-      { error: 'Erro ao processar requisição' },
+      { 
+        error: 'Erro ao processar requisição',
+        details: error.message 
+      },
       { status: 500 }
     )
   }

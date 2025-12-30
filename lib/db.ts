@@ -1,9 +1,6 @@
-import { PrismaClient } from '@prisma/client'
+// lib/db.ts
+import { firebaseAdmin } from '@/lib/firebaseAdmin'
 
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined
-}
-
-export const prisma = globalForPrisma.prisma ?? new PrismaClient()
-
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
+// Funções auxiliares para facilitar o uso do Firestore
+export const db = firebaseAdmin.firestore()
+export const storage = firebaseAdmin.storage()

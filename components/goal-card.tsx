@@ -1,20 +1,56 @@
 "use client"
 
-import { Goal } from '@prisma/client'
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from './ui/card'
-import { Badge } from './ui/badge'
-import { Progress } from './ui/progress'
-import { Target, Calendar, AlertCircle, CheckCircle2, Pause } from 'lucide-react'
+import { useState } from 'react'
 import Link from 'next/link'
+import { Badge } from './ui/badge'
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from './ui/card'
+import { Progress } from './ui/progress'
+import { Target, Calendar, AlertCircle, CheckCircle2, Pause, Trash2 } from 'lucide-react'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { motion } from 'framer-motion'
+import { Button } from './ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from './ui/dialog'
+
+interface Task {
+  id: string
+  title: string
+  completed: boolean
+  order: number
+  deadline?: string
+  goalId: string
+  createdAt: string
+  updatedAt: string
+}
+
+interface Goal {
+  id: string
+  title: string
+  description?: string
+  category: string
+  deadline?: string
+  priority: string
+  status: string
+  userId: string
+  createdAt: string
+  updatedAt: string
+  tasks?: Task[]
+}
 
 interface GoalCardProps {
   goal: Goal & {
     tasks?: { completed: boolean }[]
   }
   index?: number
+  // callback opcional para o pai remover da lista
+  onDeleted?: (goalId: string) => void
 }
 
 const categoryColors: Record<string, string> = {
@@ -42,33 +78,82 @@ const statusConfig = {
   PAUSADA: { icon: Pause, label: 'Pausada', color: 'text-gray-600 dark:text-gray-400' },
 }
 
-export function GoalCard({ goal, index = 0 }: GoalCardProps) {
+export function GoalCard({ goal, index = 0, onDeleted }: GoalCardProps) {
+  const [openDeleteModal, setOpenDeleteModal] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+
   const progress = goal.tasks && goal.tasks.length > 0
     ? (goal.tasks.filter((t) => t.completed).length / goal.tasks.length) * 100
     : 0
 
-  const StatusIcon = statusConfig[goal.status]?.icon ?? Target
-  const isOverdue = goal.deadline && new Date(goal.deadline) < new Date() && goal.status !== 'CONCLUIDA'
+  const StatusIcon = statusConfig[goal.status as keyof typeof statusConfig]?.icon ?? Target
+  const isOverdue =
+    goal.deadline &&
+    new Date(goal.deadline) < new Date() &&
+    goal.status !== 'CONCLUIDA'
+
+  const handleDeleteGoal = async () => {
+    try {
+      setIsDeleting(true)
+      const res = await fetch(`/api/goals/${goal.id}`, {
+        method: 'DELETE',
+      })
+
+      if (!res.ok) {
+        console.error('Erro ao excluir meta:', await res.text())
+        return
+      }
+
+      setOpenDeleteModal(false)
+      if (onDeleted) {
+        onDeleted(goal.id)
+      }
+    } catch (err) {
+      console.error('Erro ao excluir meta:', err)
+    } finally {
+      setIsDeleting(false)
+    }
+  }
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, delay: index * 0.1 }}
-    >
-      <Link href={`/goals/${goal.id}`}>
-        <Card className="hover:shadow-lg transition-all duration-300 hover:-translate-y-1 cursor-pointer">
+    <>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: index * 0.1 }}
+      >
+        <Card className="hover:shadow-lg transition-all duration-300 hover:-translate-y-1">
           <CardHeader>
             <div className="flex items-start justify-between gap-2">
-              <CardTitle className="text-lg flex-1">{goal.title}</CardTitle>
-              <StatusIcon className={`h-5 w-5 ${statusConfig[goal.status]?.color ?? ''}`} />
+              <Link href={`/goals/${goal.id}`} className="flex-1">
+                <div>
+                  <CardTitle className="text-lg">{goal.title}</CardTitle>
+                  {goal.description && (
+                    <p className="text-sm text-gray-700 dark:text-gray-300 line-clamp-2">
+                      {goal.description}
+                    </p>
+                  )}
+                </div>
+              </Link>
+
+              <div className="flex flex-col items-end gap-2">
+                <StatusIcon
+                  className={`h-5 w-5 ${
+                    statusConfig[goal.status as keyof typeof statusConfig]?.color ?? ''
+                  }`}
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => setOpenDeleteModal(true)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
-            {goal.description && (
-              <p className="text-sm text-gray-700 dark:text-gray-300 line-clamp-2">
-                {goal.description}
-              </p>
-            )}
           </CardHeader>
+
           <CardContent className="space-y-4">
             <div className="flex flex-wrap gap-2">
               <Badge className={categoryColors[goal.category] ?? ''}>
@@ -95,18 +180,51 @@ export function GoalCard({ goal, index = 0 }: GoalCardProps) {
             {goal.tasks && goal.tasks.length > 0 && (
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-700 dark:text-gray-300">Progresso</span>
-                  <span className="font-medium">{Math.round(progress)}%</span>
+                  <span className="text-gray-700 dark:text-gray-300">
+                    Progresso
+                  </span>
+                  <span className="font-medium">
+                    {Math.round(progress)}%
+                  </span>
                 </div>
                 <Progress value={progress} className="h-2" />
               </div>
             )}
           </CardContent>
+
           <CardFooter className="text-xs text-gray-600 dark:text-gray-400">
-            {statusConfig[goal.status]?.label ?? ''}
+            {statusConfig[goal.status as keyof typeof statusConfig]?.label ?? ''}
           </CardFooter>
         </Card>
-      </Link>
-    </motion.div>
+      </motion.div>
+
+      <Dialog open={openDeleteModal} onOpenChange={setOpenDeleteModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Excluir meta</DialogTitle>
+            <DialogDescription>
+              Tem certeza que deseja excluir a meta <strong>{goal.title}</strong>? 
+              Essa ação não pode ser desfeita e também pode remover tarefas relacionadas.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setOpenDeleteModal(false)}
+              disabled={isDeleting}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteGoal}
+              disabled={isDeleting}
+            >
+              {isDeleting ? 'Excluindo...' : 'Excluir'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }

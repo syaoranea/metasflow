@@ -33,6 +33,8 @@ export default function NewGoalPage() {
     if (!title) return
 
     setIsGeneratingTasks(true)
+    setGeneratedTasks([])
+
     try {
       const response = await fetch('/api/ai/break-goal', {
         method: 'POST',
@@ -40,35 +42,19 @@ export default function NewGoalPage() {
         body: JSON.stringify({ goalTitle: title, goalDescription: description }),
       })
 
-      const reader = response.body?.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let partialRead = ''
-
-      while (true) {
-        const { done, value } = await reader!.read()
-        if (done) break
-
-        partialRead += decoder.decode(value, { stream: true })
-        let lines = partialRead.split('\n')
-        partialRead = lines.pop() ?? ''
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6)
-            try {
-              const parsed = JSON.parse(data)
-              if (parsed.status === 'completed') {
-                setGeneratedTasks(parsed.result?.tasks ?? [])
-                setIsGeneratingTasks(false)
-                return
-              }
-            } catch (e) {
-              // Skip invalid JSON
-            }
-          }
-        }
+      if (!response.ok) {
+        const err = await response.json().catch(() => null)
+        console.error('Erro ao gerar tarefas (API):', err)
+        throw new Error(err?.error || 'Erro ao gerar tarefas com IA')
       }
+
+      const data = await response.json()
+
+      // 👇 Bate com o formato da rota atual
+      const tasks = data?.result?.tasks ?? []
+
+      console.log('Tarefas geradas pela IA:', tasks)
+      setGeneratedTasks(tasks)
     } catch (error) {
       console.error('Erro ao gerar tarefas:', error)
     } finally {

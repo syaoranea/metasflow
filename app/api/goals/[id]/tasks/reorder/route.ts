@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { db } from '@/lib/firebaseAdmin'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,15 +16,14 @@ export async function PUT(
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
-    const goal = await prisma.goal.findFirst({
-      where: {
-        id: params.id,
-        userId: session.user.id,
-      },
-    })
-
-    if (!goal) {
+    // Verifica se a meta pertence ao usuário
+    const goalDoc = await db.collection('goals').doc(params.id).get()
+    if (!goalDoc.exists) {
       return NextResponse.json({ error: 'Meta não encontrada' }, { status: 404 })
+    }
+    const goalData = goalDoc.data()
+    if (goalData?.userId !== session.user.id) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
     const body = await request.json()
@@ -37,14 +36,15 @@ export async function PUT(
       )
     }
 
-    await Promise.all(
-      tasks.map((task: { id: string; order: number }) =>
-        prisma.task.update({
-          where: { id: task.id },
-          data: { order: task.order },
-        })
-      )
-    )
+    // Atualiza a ordem das tarefas em batch
+    const batch = db.batch()
+
+    for (const task of tasks) {
+      const taskRef = db.collection('tasks').doc(task.id)
+      batch.update(taskRef, { order: task.order, updatedAt: new Date().toISOString() })
+    }
+
+    await batch.commit()
 
     return NextResponse.json({ message: 'Tarefas reordenadas com sucesso' })
   } catch (error) {

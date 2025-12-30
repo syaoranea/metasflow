@@ -1,23 +1,39 @@
 "use client"
 
-import { Task } from '@prisma/client'
+import { useEffect, useState } from 'react'
 import { Checkbox } from './ui/checkbox'
-import { Calendar, GripVertical, Trash2 } from 'lucide-react'
+import { Calendar, GripVertical, Trash2, Edit2 } from 'lucide-react'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { Button } from './ui/button'
-import { useState } from 'react'
 import { motion, Reorder } from 'framer-motion'
+
+interface Task {
+  id: string
+  title: string
+  completed: boolean
+  order: number
+  deadline?: string
+  goalId: string
+  createdAt: string
+  updatedAt: string
+}
 
 interface TaskListProps {
   tasks: Task[]
   goalId: string
   onUpdate: () => void
+  onEditTask?: (task: Task) => void  // 🔴 Nova prop para editar
 }
 
-export function TaskList({ tasks: initialTasks, goalId, onUpdate }: TaskListProps) {
+export function TaskList({ tasks: initialTasks, goalId, onUpdate, onEditTask }: TaskListProps) {
   const [tasks, setTasks] = useState(initialTasks)
   const [isReordering, setIsReordering] = useState(false)
+
+  // 🔄 Mantém o estado local em sync com o que vem do pai
+  useEffect(() => {
+    setTasks(initialTasks)
+  }, [initialTasks])
 
   const handleToggle = async (taskId: string, completed: boolean) => {
     try {
@@ -28,6 +44,12 @@ export function TaskList({ tasks: initialTasks, goalId, onUpdate }: TaskListProp
       })
 
       if (response.ok) {
+        // Atualiza localmente para feedback imediato
+        setTasks(prev =>
+          prev.map(t =>
+            t.id === taskId ? { ...t, completed } : t
+          )
+        )
         onUpdate()
       }
     } catch (error) {
@@ -42,6 +64,9 @@ export function TaskList({ tasks: initialTasks, goalId, onUpdate }: TaskListProp
       })
 
       if (response.ok) {
+        // Remove da UI imediatamente
+        setTasks(prev => prev.filter(t => t.id !== taskId))
+        // Se quiser garantir consistência com backend:
         onUpdate()
       }
     } catch (error) {
@@ -60,6 +85,8 @@ export function TaskList({ tasks: initialTasks, goalId, onUpdate }: TaskListProp
           tasks: newTasks.map((t, idx) => ({ id: t.id, order: idx }))
         }),
       })
+      // Opcional: recarregar do backend
+      onUpdate()
     } catch (error) {
       console.error('Erro ao reordenar tarefas:', error)
     }
@@ -86,7 +113,12 @@ export function TaskList({ tasks: initialTasks, goalId, onUpdate }: TaskListProp
       </div>
 
       {isReordering ? (
-        <Reorder.Group axis="y" values={tasks} onReorder={handleReorder} className="space-y-2">
+        <Reorder.Group
+          axis="y"
+          values={tasks}
+          onReorder={handleReorder}
+          className="space-y-2"
+        >
           {tasks.map((task) => (
             <Reorder.Item key={task.id} value={task}>
               <motion.div
@@ -134,14 +166,28 @@ export function TaskList({ tasks: initialTasks, goalId, onUpdate }: TaskListProp
                   </div>
                 )}
               </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => handleDelete(task.id)}
-                className="text-destructive hover:text-destructive"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+
+              {/* 🔴 Botões de ação */}
+              <div className="flex items-center gap-1">
+                {onEditTask && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => onEditTask(task)}
+                    className="text-muted-foreground hover:text-primary"
+                  >
+                    <Edit2 className="h-4 w-4" />
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => handleDelete(task.id)}
+                  className="text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
             </motion.div>
           ))}
         </div>

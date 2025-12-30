@@ -10,7 +10,20 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Goal } from '@prisma/client'
+
+// Tipo atualizado para funcionar com Firestore
+interface Goal {
+  id: string
+  title: string
+  description?: string
+  category: string
+  deadline?: string
+  priority: string
+  status: string
+  userId: string
+  createdAt: string
+  updatedAt: string
+}
 
 export default function EditGoalPage() {
   const params = useParams()
@@ -39,7 +52,7 @@ export default function EditGoalPage() {
     try {
       const response = await fetch(`/api/goals/${params?.id}`)
       if (response.ok) {
-        const data = await response.json()
+        const data: Goal = await response.json()
         setGoal(data)
         setTitle(data.title)
         setDescription(data.description || '')

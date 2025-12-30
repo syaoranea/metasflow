@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { db } from '@/lib/firebaseAdmin'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,25 +16,27 @@ export async function GET(
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
-    const goal = await prisma.goal.findFirst({
-      where: {
-        id: params.id,
-        userId: session.user.id,
-      },
-    })
-
-    if (!goal) {
+    // Verifica se a meta pertence ao usuário
+    const goalDoc = await db.collection('goals').doc(params.id).get()
+    if (!goalDoc.exists) {
       return NextResponse.json({ error: 'Meta não encontrada' }, { status: 404 })
     }
+    const goalData = goalDoc.data()
+    if (goalData?.userId !== session.user.id) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+    }
 
-    const reflections = await prisma.reflection.findMany({
-      where: {
-        goalId: params.id,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    })
+    // Busca reflexões relacionadas ordenadas por createdAt desc
+    const reflectionsSnapshot = await db
+      .collection('reflections')
+      .where('goalId', '==', params.id)
+      .orderBy('createdAt', 'desc')
+      .get()
+
+    const reflections = reflectionsSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    }))
 
     return NextResponse.json(reflections)
   } catch (error) {
@@ -57,29 +59,30 @@ export async function POST(
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
-    const goal = await prisma.goal.findFirst({
-      where: {
-        id: params.id,
-        userId: session.user.id,
-      },
-    })
-
-    if (!goal) {
+    // Verifica se a meta pertence ao usuário
+    const goalDoc = await db.collection('goals').doc(params.id).get()
+    if (!goalDoc.exists) {
       return NextResponse.json({ error: 'Meta não encontrada' }, { status: 404 })
+    }
+    const goalData = goalDoc.data()
+    if (goalData?.userId !== session.user.id) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
     const body = await request.json()
     const { whatWorked, whatDidntWork } = body
 
-    const reflection = await prisma.reflection.create({
-      data: {
-        whatWorked,
-        whatDidntWork,
-        goalId: params.id,
-      },
-    })
+    const newReflection = {
+      whatWorked,
+      whatDidntWork,
+      goalId: params.id,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
 
-    return NextResponse.json(reflection, { status: 201 })
+    const docRef = await db.collection('reflections').add(newReflection)
+
+    return NextResponse.json({ id: docRef.id, ...newReflection }, { status: 201 })
   } catch (error) {
     console.error('Erro ao criar reflexão:', error)
     return NextResponse.json(

@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { db } from '@/lib/firebaseAdmin'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
   try {
     const session = await getServerSession(authOptions)
 
@@ -13,40 +16,48 @@ export async function GET(request: Request, { params }: { params: { id: string }
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
-    const goal = await prisma.goal.findFirst({
-      where: {
-        id: params.id,
-        userId: session.user.id,
-      },
-      include: {
-        tasks: {
-          orderBy: {
-            order: 'asc',
-          },
-        },
-        reflections: {
-          orderBy: {
-            createdAt: 'desc',
-          },
-        },
-      },
-    })
+    const goalDoc = await db.collection('goals').doc(params.id).get()
 
-    if (!goal) {
+    if (!goalDoc.exists) {
       return NextResponse.json({ error: 'Meta não encontrada' }, { status: 404 })
     }
 
-    return NextResponse.json(goal)
+    const goalData = goalDoc.data()
+
+    if (goalData?.userId !== session.user.id) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+    }
+
+    // Buscar tasks relacionadas ordenadas por 'order' asc
+    const tasksSnapshot = await db
+      .collection('tasks')
+      .where('goalId', '==', params.id)
+      .orderBy('order', 'asc')
+      .get()
+    const tasks = tasksSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+
+    // Buscar reflections relacionadas ordenadas por 'createdAt' desc
+    const reflectionsSnapshot = await db
+      .collection('reflections')
+      .where('goalId', '==', params.id)
+      .orderBy('createdAt', 'desc')
+      .get()
+    const reflections = reflectionsSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    }))
+
+    return NextResponse.json({ id: goalDoc.id, ...goalData, tasks, reflections })
   } catch (error) {
     console.error('Erro ao buscar meta:', error)
-    return NextResponse.json(
-      { error: 'Erro ao buscar meta' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Erro ao buscar meta' }, { status: 500 })
   }
 }
 
-export async function PUT(request: Request, { params }: { params: { id: string } }) {
+export async function PUT(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
   try {
     const session = await getServerSession(authOptions)
 
@@ -57,40 +68,47 @@ export async function PUT(request: Request, { params }: { params: { id: string }
     const body = await request.json()
     const { title, description, category, deadline, priority, status } = body
 
-    const existingGoal = await prisma.goal.findFirst({
-      where: {
-        id: params.id,
-        userId: session.user.id,
-      },
-    })
+    const goalRef = db.collection('goals').doc(params.id)
+    const goalDoc = await goalRef.get()
 
-    if (!existingGoal) {
+    if (!goalDoc.exists) {
       return NextResponse.json({ error: 'Meta não encontrada' }, { status: 404 })
     }
 
-    const goal = await prisma.goal.update({
-      where: { id: params.id },
-      data: {
-        title,
-        description,
-        category,
-        deadline: deadline ? new Date(deadline) : null,
-        priority,
-        status,
-      },
-    })
+    const goalData = goalDoc.data()
+    if (goalData?.userId !== session.user.id) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+    }
 
-    return NextResponse.json(goal)
+    const updatedData: any = {
+      title,
+      description,
+      category,
+      priority,
+      status,
+      updatedAt: new Date().toISOString(),
+    }
+
+    if (deadline) {
+      updatedData.deadline = new Date(deadline).toISOString()
+    } else {
+      updatedData.deadline = null
+    }
+
+    await goalRef.update(updatedData)
+
+    const updatedGoalDoc = await goalRef.get()
+    return NextResponse.json({ id: updatedGoalDoc.id, ...updatedGoalDoc.data() })
   } catch (error) {
     console.error('Erro ao atualizar meta:', error)
-    return NextResponse.json(
-      { error: 'Erro ao atualizar meta' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Erro ao atualizar meta' }, { status: 500 })
   }
 }
 
-export async function DELETE(request: Request, { params }: { params: { id: string } }) {
+export async function DELETE(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
   try {
     const session = await getServerSession(authOptions)
 
@@ -98,27 +116,23 @@ export async function DELETE(request: Request, { params }: { params: { id: strin
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
-    const existingGoal = await prisma.goal.findFirst({
-      where: {
-        id: params.id,
-        userId: session.user.id,
-      },
-    })
+    const goalRef = db.collection('goals').doc(params.id)
+    const goalDoc = await goalRef.get()
 
-    if (!existingGoal) {
+    if (!goalDoc.exists) {
       return NextResponse.json({ error: 'Meta não encontrada' }, { status: 404 })
     }
 
-    await prisma.goal.delete({
-      where: { id: params.id },
-    })
+    const goalData = goalDoc.data()
+    if (goalData?.userId !== session.user.id) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+    }
+
+    await goalRef.delete()
 
     return NextResponse.json({ message: 'Meta excluída com sucesso' })
   } catch (error) {
     console.error('Erro ao deletar meta:', error)
-    return NextResponse.json(
-      { error: 'Erro ao deletar meta' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Erro ao deletar meta' }, { status: 500 })
   }
 }

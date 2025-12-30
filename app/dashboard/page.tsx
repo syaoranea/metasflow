@@ -9,10 +9,65 @@ import { StatsCard } from '@/components/stats-card'
 import { FilterBar } from '@/components/filter-bar'
 import { ProgressChart } from '@/components/charts/progress-chart'
 import { Target, CheckCircle2, AlertCircle, TrendingUp } from 'lucide-react'
-import { Goal } from '@prisma/client'
+
+// Tipos atualizados para funcionar com Firestore
+interface Task {
+  id: string
+  title: string
+  completed: boolean
+  order: number
+  deadline?: string
+  goalId: string
+  createdAt: string
+  updatedAt: string
+}
+
+interface Reflection {
+  id: string
+  whatWorked?: string
+  whatDidntWork?: string
+  goalId: string
+  createdAt: string
+  updatedAt: string
+}
+
+interface Goal {
+  id: string
+  title: string
+  description?: string
+  category: string
+  deadline?: string
+  priority: string
+  status: string
+  userId: string
+  createdAt: string
+  updatedAt: string
+  tasks?: Task[]
+  reflections?: Reflection[]
+}
 
 type GoalWithTasks = Goal & {
   tasks: { completed: boolean }[]
+}
+
+// Componente de Skeleton para os StatsCard
+function StatsCardSkeleton({ index = 0 }: { index?: number }) {
+  return (
+    <div
+      className="p-6 rounded-xl border bg-card shadow-sm space-y-3"
+      style={{ 
+        animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        animationDelay: `${index * 0.1}s` 
+      }}
+    >
+      <div className="flex justify-between items-start">
+        <div className="h-4 w-24 bg-muted rounded animate-pulse" />
+        <div className="h-8 w-8 bg-muted rounded-full animate-pulse" />
+      </div>
+      <div className="h-8 w-16 bg-muted rounded animate-pulse" />
+      <div className="h-3 w-32 bg-muted rounded animate-pulse" />
+    </div>
+  )
 }
 
 export default function DashboardPage() {
@@ -44,7 +99,7 @@ export default function DashboardPage() {
 
       const response = await fetch(`/api/goals?${params.toString()}`)
       if (response.ok) {
-        const data = await response.json()
+        const data: GoalWithTasks[] = await response.json()
         setGoals(data)
       }
     } catch (error) {
@@ -52,6 +107,11 @@ export default function DashboardPage() {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // Função para remover a meta do estado local após exclusão
+  const handleGoalDeleted = (goalId: string) => {
+    setGoals(prev => prev.filter(g => g.id !== goalId))
   }
 
   if (status === 'loading' || !session) {
@@ -116,40 +176,57 @@ export default function DashboardPage() {
             </p>
           </div>
 
+          {/* Stats Cards com Loading */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatsCard
-              title="Total de Metas"
-              value={totalGoals}
-              icon={Target}
-              color="text-blue-600 dark:text-blue-400"
-              index={0}
-            />
-            <StatsCard
-              title="Metas Concluídas"
-              value={completedGoals}
-              icon={CheckCircle2}
-              description={`${totalGoals > 0 ? Math.round((completedGoals / totalGoals) * 100) : 0}% do total`}
-              color="text-green-600 dark:text-green-400"
-              index={1}
-            />
-            <StatsCard
-              title="Metas Atrasadas"
-              value={overdueGoals}
-              icon={AlertCircle}
-              color="text-red-600 dark:text-red-400"
-              index={2}
-            />
-            <StatsCard
-              title="Progresso Geral"
-              value={overallProgress}
-              icon={TrendingUp}
-              description="% de tarefas concluídas"
-              color="text-purple-600 dark:text-purple-400"
-              index={3}
-            />
+            {isLoading ? (
+              <>
+                <StatsCardSkeleton index={0} />
+                <StatsCardSkeleton index={1} />
+                <StatsCardSkeleton index={2} />
+                <StatsCardSkeleton index={3} />
+              </>
+            ) : (
+              <>
+                <StatsCard
+                  title="Total de Metas"
+                  value={totalGoals}
+                  icon={Target}
+                  color="text-blue-600 dark:text-blue-400"
+                  index={0}
+                />
+                <StatsCard
+                  title="Metas Concluídas"
+                  value={completedGoals}
+                  icon={CheckCircle2}
+                  description={`${totalGoals > 0 ? Math.round((completedGoals / totalGoals) * 100) : 0}% do total`}
+                  color="text-green-600 dark:text-green-400"
+                  index={1}
+                />
+                <StatsCard
+                  title="Metas Atrasadas"
+                  value={overdueGoals}
+                  icon={AlertCircle}
+                  color="text-red-600 dark:text-red-400"
+                  index={2}
+                />
+                <StatsCard
+                  title="Progresso Geral"
+                  value={overallProgress}
+                  icon={TrendingUp}
+                  description="% de tarefas concluídas"
+                  color="text-purple-600 dark:text-purple-400"
+                  index={3}
+                />
+              </>
+            )}
           </div>
 
-          <ProgressChart data={monthlyData} />
+          {/* Progress Chart com Loading */}
+          {isLoading ? (
+            <div className="w-full h-64 rounded-xl bg-muted/60 animate-pulse" />
+          ) : (
+            <ProgressChart data={monthlyData} />
+          )}
 
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -183,7 +260,12 @@ export default function DashboardPage() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {goals.map((goal, idx) => (
-                  <GoalCard key={goal.id} goal={goal} index={idx} />
+                  <GoalCard 
+                    key={goal.id} 
+                    goal={goal} 
+                    index={idx}
+                    onDeleted={handleGoalDeleted}
+                  />
                 ))}
               </div>
             )}
