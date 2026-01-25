@@ -138,30 +138,6 @@ export default function DashboardPage() {
   )
   const overallProgress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
 
-  const monthlyData = [
-    { month: 'Jan', completed: 0, total: 0 },
-    { month: 'Fev', completed: 0, total: 0 },
-    { month: 'Mar', completed: 0, total: 0 },
-    { month: 'Abr', completed: 0, total: 0 },
-    { month: 'Mai', completed: 0, total: 0 },
-    { month: 'Jun', completed: 0, total: 0 },
-    { month: 'Jul', completed: 0, total: 0 },
-    { month: 'Ago', completed: 0, total: 0 },
-    { month: 'Set', completed: 0, total: 0 },
-    { month: 'Out', completed: 0, total: 0 },
-    { month: 'Nov', completed: 0, total: 0 },
-    { month: 'Dez', completed: 1, total: 1 },
-  ]
-
-  goals.forEach((goal) => {
-    if (goal.deadline) {
-      const month = new Date(goal.deadline).getMonth()
-      monthlyData[month].total += 1
-      if (goal.status === 'CONCLUIDA') {
-        monthlyData[month].completed += 1
-      }
-    }
-  })
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50/50 via-purple-50/50 to-pink-50/50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
@@ -225,7 +201,7 @@ export default function DashboardPage() {
           {isLoading ? (
             <div className="w-full h-64 rounded-xl bg-muted/60 animate-pulse" />
           ) : (
-            <ProgressChart data={monthlyData} />
+            <ProgressChart goals={goals} />
           )}
 
           <div className="space-y-4">

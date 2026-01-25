@@ -1,27 +1,73 @@
 "use client"
 
+import { useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 
-interface ProgressChartProps {
-  data: {
-    month: string
-    completed: number
-    total: number
-  }[]
+interface Goal {
+  deadline?: string
+  status: string
 }
 
-export function ProgressChart({ data }: ProgressChartProps) {
-  const chartData = data?.map((item) => ({
+interface ProgressChartProps {
+  goals: Goal[]
+}
+
+const MONTHS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+
+export function ProgressChart({ goals }: ProgressChartProps) {
+  const currentYear = new Date().getFullYear()
+  const [selectedYear, setSelectedYear] = useState<string>(currentYear.toString())
+
+  const availableYears = [2025, 2026, 2027]
+
+  const monthlyData = MONTHS.map((month) => ({
+    month,
+    completed: 0,
+    total: 0,
+  }))
+
+  goals.forEach((goal) => {
+    if (goal.deadline) {
+      const deadlineDate = new Date(goal.deadline)
+      const goalYear = deadlineDate.getFullYear()
+      if (goalYear.toString() === selectedYear) {
+        const monthIndex = deadlineDate.getMonth()
+        monthlyData[monthIndex].total += 1
+        if (goal.status === 'CONCLUIDA') {
+          monthlyData[monthIndex].completed += 1
+        }
+      }
+    }
+  })
+
+  const chartData = monthlyData.map((item) => ({
     month: item.month,
     taxa: item.total > 0 ? ((item.completed / item.total) * 100).toFixed(0) : 0,
-  })) ?? []
+  }))
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Progresso Mensal</CardTitle>
-        <CardDescription>Taxa de conclusão de metas por mês</CardDescription>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle>Progresso Mensal</CardTitle>
+            <CardDescription>Taxa de conclusão de metas por mês</CardDescription>
+          </div>
+          <Select value={selectedYear} onValueChange={setSelectedYear}>
+            <SelectTrigger className="w-[100px]">
+              <SelectValue placeholder="Ano" />
+            </SelectTrigger>
+            <SelectContent>
+              {availableYears.map((year) => (
+                <SelectItem key={year} value={year.toString()}>
+                  {year}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="h-[300px] w-full">
