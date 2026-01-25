@@ -17,10 +17,21 @@ interface ProgressChartProps {
 const MONTHS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 
 export function ProgressChart({ goals }: ProgressChartProps) {
-  const currentYear = new Date().getFullYear()
-  const [selectedYear, setSelectedYear] = useState<string>(currentYear.toString())
+  const yearsWithGoals = Array.from(
+    new Set(
+      goals
+        .filter((goal) => goal.deadline)
+        .map((goal) => new Date(goal.deadline!).getFullYear())
+    )
+  ).sort((a, b) => b - a)
 
-  const availableYears = [2025, 2026, 2027]
+  const currentYear = new Date().getFullYear()
+  const defaultYear = yearsWithGoals.length > 0 ? yearsWithGoals[0] : currentYear
+  const [selectedYear, setSelectedYear] = useState<string>(defaultYear.toString())
+
+  const availableYears = yearsWithGoals.length > 0 
+    ? yearsWithGoals 
+    : [currentYear - 1, currentYear, currentYear + 1]
 
   const monthlyData = MONTHS.map((month) => ({
     month,
