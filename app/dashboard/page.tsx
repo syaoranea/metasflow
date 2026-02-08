@@ -8,6 +8,7 @@ import { GoalCard } from '@/components/goal-card'
 import { StatsCard } from '@/components/stats-card'
 import { FilterBar } from '@/components/filter-bar'
 import { ProgressChart } from '@/components/charts/progress-chart'
+import { YearSelector } from '@/components/year-selector'
 import { Target, CheckCircle2, AlertCircle, TrendingUp } from 'lucide-react'
 
 // Tipos atualizados para funcionar com Firestore
@@ -70,12 +71,18 @@ function StatsCardSkeleton({ index = 0 }: { index?: number }) {
   )
 }
 
+// Função para obter o ano atual dinamicamente
+function getCurrentYear(): number {
+  return new Date().getFullYear()
+}
+
 export default function DashboardPage() {
   const { data: session, status } = useSession() || {}
   const router = useRouter()
   const [goals, setGoals] = useState<GoalWithTasks[]>([])
   const [categoryFilter, setCategoryFilter] = useState('TODAS')
   const [statusFilter, setStatusFilter] = useState('TODOS')
+  const [selectedYear, setSelectedYear] = useState(getCurrentYear())
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
@@ -88,7 +95,7 @@ export default function DashboardPage() {
     if (status === 'authenticated') {
       fetchGoals()
     }
-  }, [status, categoryFilter, statusFilter])
+  }, [status, categoryFilter, statusFilter, selectedYear])
 
   const fetchGoals = async () => {
     setIsLoading(true)
@@ -96,6 +103,8 @@ export default function DashboardPage() {
       const params = new URLSearchParams()
       if (categoryFilter !== 'TODAS') params.append('category', categoryFilter)
       if (statusFilter !== 'TODOS') params.append('status', statusFilter)
+      // Sempre enviar o ano selecionado para filtrar
+      params.append('year', selectedYear.toString())
 
       const response = await fetch(`/api/goals?${params.toString()}`)
       if (response.ok) {
@@ -114,6 +123,11 @@ export default function DashboardPage() {
     setGoals(prev => prev.filter(g => g.id !== goalId))
   }
 
+  // Handler para mudança de ano
+  const handleYearChange = (year: number) => {
+    setSelectedYear(year)
+  }
+
   if (status === 'loading' || !session) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -125,6 +139,7 @@ export default function DashboardPage() {
     )
   }
 
+  // Estatísticas baseadas apenas nas metas do ano selecionado (já filtradas pela API)
   const totalGoals = goals.length
   const completedGoals = goals.filter((g) => g.status === 'CONCLUIDA').length
   const overdueGoals = goals.filter(
@@ -138,30 +153,34 @@ export default function DashboardPage() {
   )
   const overallProgress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
 
-  const monthlyData = [
-    { month: 'Jan', completed: 0, total: 0 },
-    { month: 'Fev', completed: 0, total: 0 },
-    { month: 'Mar', completed: 0, total: 0 },
-    { month: 'Abr', completed: 0, total: 0 },
-    { month: 'Mai', completed: 0, total: 0 },
-    { month: 'Jun', completed: 0, total: 0 },
-    { month: 'Jul', completed: 0, total: 0 },
-    { month: 'Ago', completed: 0, total: 0 },
-    { month: 'Set', completed: 0, total: 0 },
-    { month: 'Out', completed: 0, total: 0 },
-    { month: 'Nov', completed: 0, total: 0 },
-    { month: 'Dez', completed: 1, total: 1 },
-  ]
+  // Total de metas do ano selecionado (já filtradas pela API)
+  const totalGoalsForYear = goals.length
 
-  goals.forEach((goal) => {
-    if (goal.deadline) {
-      const month = new Date(goal.deadline).getMonth()
-      monthlyData[month].total += 1
-      if (goal.status === 'CONCLUIDA') {
-        monthlyData[month].completed += 1
-      }
+  // Dados mensais para o gráfico - Progresso ACUMULADO ao longo do ano
+  const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+  
+  const monthlyData = monthNames.map((monthName, monthIndex) => {
+    // Calcular a data do final do mês
+    const endOfMonth = new Date(selectedYear, monthIndex + 1, 0, 23, 59, 59, 999)
+    
+    // Contar metas concluídas ATÉ o final deste mês (acumulado)
+    const completedUntilMonth = goals.filter((goal) => {
+      if (goal.status !== 'CONCLUIDA') return false
+      
+      // Usar updatedAt como data de conclusão (quando a meta foi marcada como concluída)
+      const completionDate = new Date(goal.updatedAt)
+      return completionDate <= endOfMonth
+    }).length
+    
+    return {
+      month: monthName,
+      completed: completedUntilMonth,
+      total: totalGoalsForYear
     }
   })
+
+  const currentYear = getCurrentYear()
+  const isCurrentYear = selectedYear === currentYear
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50/50 via-purple-50/50 to-pink-50/50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
@@ -169,11 +188,28 @@ export default function DashboardPage() {
 
       <main className="container mx-auto px-4 py-8 max-w-7xl">
         <div className="space-y-8">
-          <div>
-            <h1 className="text-3xl font-bold">Minhas Metas 2025</h1>
-            <p className="text-muted-foreground mt-2">
-              Acompanhe o progresso das suas metas e mantenha o foco nos seus objetivos.
-            </p>
+          {/* Header com título dinâmico e seletor de ano */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-bold">
+                Minhas Metas {selectedYear}
+                {!isCurrentYear && (
+                  <span className="ml-2 text-sm font-normal text-muted-foreground">
+                    (Histórico)
+                  </span>
+                )}
+              </h1>
+              <p className="text-muted-foreground mt-2">
+                {isCurrentYear 
+                  ? 'Acompanhe o progresso das suas metas e mantenha o foco nos seus objetivos.'
+                  : `Visualizando dados históricos de ${selectedYear}.`
+                }
+              </p>
+            </div>
+            <YearSelector 
+              selectedYear={selectedYear} 
+              onYearChange={handleYearChange} 
+            />
           </div>
 
           {/* Stats Cards com Loading */}
@@ -225,7 +261,7 @@ export default function DashboardPage() {
           {isLoading ? (
             <div className="w-full h-64 rounded-xl bg-muted/60 animate-pulse" />
           ) : (
-            <ProgressChart data={monthlyData} />
+            <ProgressChart data={monthlyData} year={selectedYear} />
           )}
 
           <div className="space-y-4">
@@ -254,7 +290,10 @@ export default function DashboardPage() {
                 <Target className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                 <p className="text-lg font-medium">Nenhuma meta encontrada</p>
                 <p className="text-muted-foreground mt-2">
-                  Crie sua primeira meta e comece a organizar 2025!
+                  {isCurrentYear 
+                    ? `Crie sua primeira meta e comece a organizar ${selectedYear}!`
+                    : `Não há metas registradas para ${selectedYear}.`
+                  }
                 </p>
               </div>
             ) : (

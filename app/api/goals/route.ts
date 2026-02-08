@@ -17,6 +17,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url)
     const category = searchParams.get('category')
     const status = searchParams.get('status')
+    const year = searchParams.get('year')
 
     let query: FirebaseFirestore.Query = db.collection('goals')
 
@@ -37,8 +38,32 @@ export async function GET(request: Request) {
     const snapshot = await query.orderBy('createdAt', 'desc').get()
 
     const goals = []
+    
+    // Determinar o ano para filtro (padrão: ano atual)
+    const filterYear = year ? parseInt(year) : new Date().getFullYear()
+    const yearStart = new Date(filterYear, 0, 1) // 1 de janeiro do ano
+    const yearEnd = new Date(filterYear, 11, 31, 23, 59, 59, 999) // 31 de dezembro do ano
+    
     for (const doc of snapshot.docs) {
-      const goal = { id: doc.id, ...doc.data() }
+      const goalData = doc.data()
+      const goal = { id: doc.id, ...goalData }
+
+      // Filtrar por ano baseado no deadline
+      if (goalData.deadline) {
+        const deadlineDate = new Date(goalData.deadline)
+        // Incluir apenas metas com deadline no ano especificado
+        if (deadlineDate < yearStart || deadlineDate > yearEnd) {
+          continue // Pular metas fora do ano filtrado
+        }
+      } else {
+        // Se não tem deadline, usar a data de criação para filtrar
+        if (goalData.createdAt) {
+          const createdDate = new Date(goalData.createdAt)
+          if (createdDate < yearStart || createdDate > yearEnd) {
+            continue // Pular metas criadas fora do ano filtrado
+          }
+        }
+      }
 
       // Buscar tasks relacionadas
       const tasksSnapshot = await db
