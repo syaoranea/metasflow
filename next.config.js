@@ -1,7 +1,6 @@
 // next.config.js
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  basePath: '/resolucao',
   reactStrictMode: true,
   eslint: {
     // se quiser mesmo pular lints no build:
